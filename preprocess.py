@@ -16,6 +16,7 @@
         
 import pandas as pd
 import matplotlib.pyplot as plt
+from multiprocessing import Pool, cpu_count
 
 
 
@@ -105,11 +106,60 @@ def generate_bandwidth(df, window_size=0.0005, plot_bw=True):
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.savefig("bandwidth.png")
     return df
+def generate_bandwidth_parallel(df_chunk, df, window_size):
+    """
+    This function calculates bandwidth for a chunk of data.
+    """
+    bandwidth_values = []
+    for _, row in df_chunk.iterrows():
+        start_time = row['Timestamp (in nanoseconds)'] - window_size / 2
+        end_time = row['Timestamp (in nanoseconds)'] + window_size / 2
+        
+        # Filter data within the window
+        window_data = df[(df['Timestamp (in nanoseconds)'] >= start_time) & 
+                        (df['Timestamp (in nanoseconds)'] <= end_time)]
+        
+        # Calculate bandwidth
+        total_io_size = window_data['I/O Size'].sum()
+        bandwidth = total_io_size / window_size
+        bandwidth_values.append(bandwidth)
+    
+    return bandwidth_values
 
+def parallel_bandwidth(df, window_size=0.0005, plot_bw=True):
+    """
+    A parallelized version of generate_bandwidth.
+    """
+    # Number of processes to run in parallel
+    num_processes = cpu_count()
+    
+    # Split dataframe into chunks for each process
+    chunk_size = len(df) // num_processes
+    chunks = [df.iloc[i:i + chunk_size] for i in range(0, len(df), chunk_size)]
+    
+    # Use a Pool to process each chunk in parallel
+    with Pool(processes=num_processes) as pool:
+        results = pool.starmap(generate_bandwidth_parallel, [(chunk, df, window_size) for chunk in chunks])
+    
+    # Flatten results and assign bandwidth values to the dataframe
+    bandwidth_values = [val for sublist in results for val in sublist]
+    df['Bandwidth'] = bandwidth_values
+    
+    # Plot the bandwidth if required
+    if plot_bw:
+        plt.figure(figsize=(12,7))
+        plt.plot(df['Timestamp (in nanoseconds)'], df['Bandwidth'])
+        plt.xlabel('Timestamp (in nanoseconds)')
+        plt.ylabel('Bandwidth')
+        plt.title('Bandwidth with respect to Timestamp')
+        plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+        plt.savefig("bandwidth_parallel.png")
+    
+    return df
 if __name__ == "__main__":
-    df_sample = read_trace("ssdtrace-00")
+    df_sample = read_trace("ssdtrace-sample")
     df_sample = clean_df(df_sample)
 
     df_sample.to_csv("preprocessed.csv")
-    df_sample = generate_bandwidth(df_sample, window_size=0.1)
+    df_sample = parallel_bandwidth(df_sample, window_size=0.1)
     print(df_sample.head())
