@@ -20,7 +20,7 @@ import os
 from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 import numpy as np
-
+import bisect
 
 def read_trace(file_name):
 
@@ -33,7 +33,7 @@ def read_trace(file_name):
 
     processed_data =  []
     with open(file_name, "r") as file:
-        for line in file:
+        for line in tqdm(file):
             line = line.split()
             if len(line) == 11:
                 major_minor = line[0].split(',')
@@ -113,13 +113,21 @@ def generate_bandwidth_parallel(df_chunk, df, window_size):
     This function calculates bandwidth for a chunk of data.
     """
     bandwidth_values = []
-    for _, row in df_chunk.iterrows():
+    for _, row in tqdm(df_chunk.iterrows(), total=len(df_chunk)):
         start_time = row['Timestamp (in nanoseconds)'] - window_size / 2
         end_time = row['Timestamp (in nanoseconds)'] + window_size / 2
         
         # Filter data within the window
-        window_data = df[(df['Timestamp (in nanoseconds)'] >= start_time) & 
-                        (df['Timestamp (in nanoseconds)'] <= end_time)]
+        # window_data = df[(df['Timestamp (in nanoseconds)'] >= start_time) & 
+        #                 (df['Timestamp (in nanoseconds)'] <= end_time)]
+
+        timestamps = df['Timestamp (in nanoseconds)'].values
+    
+        # Find the start and end indices using binary search
+        start_idx = bisect.bisect_left(timestamps, start_time)
+        end_idx = bisect.bisect_right(timestamps, end_time)
+
+        window_data = df.iloc[start_idx:end_idx]
         
         # Calculate bandwidth
         total_io_size = window_data['I/O Size'].sum()
@@ -155,21 +163,22 @@ def parallel_bandwidth(df, window_size=0.0005, plot_bw=True):
         plt.ylabel('Bandwidth')
         plt.title('Bandwidth with respect to Timestamp')
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
-        plt.savefig("bandwidth_parallel.png")
+        plt.savefig("bandwidth_parallel%f.png" % window_size)
     
     return df
 if __name__ == "__main__":
     PATH_PREFIX = '/mnt/nvme1n1/kt19'
+    WINDOW_SIZE = 10.
     # df_sample = read_trace(os.path.join(PATH_PREFIX, "ssdtrace-00"))
     # df_sample = clean_df(df_sample)
 
     # df_sample.to_csv("preprocessed.csv")
     # read df_sample from csv
     df_sample = pd.read_csv("preprocessed.csv")
+
+    # df_sample = generate_bandwidth(df_sample, window_size=WINDOW_SIZE)
+    df_sample = parallel_bandwidth(df_sample, window_size=WINDOW_SIZE)
+
+    df_sample.to_csv("preprocessed_bw%f.csv" % WINDOW_SIZE)
     print(df_sample.head())
     print(df_sample.info())
-
-    # df_sample = generate_bandwidth(df_sample, window_size=0.1)
-    df_sample = parallel_bandwidth(df_sample, window_size=0.1)
-
-    print(df_sample.head())
