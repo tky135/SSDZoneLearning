@@ -65,16 +65,13 @@ def read_trace(file_name):
     for col in float_columns:
         df[col] = df[col].astype(float)
 
-    return df
-def clean_df(df):
     # only keep Trace Action == 'Q'
     df = df.loc[df['Trace Action'] == 'Q']
 
     # (temp) select 
     df = df[['Timestamp (in nanoseconds)', 'I/O Size']]
     return df.reset_index(drop=True)
-
-def generate_bandwidth(df, window_size=0.0005, plot_bw=True):
+def bw_entry_aligned(df, window_size=0.0005, plot_bw=True):
     """
     A window-based method to generate a bandwidth column based on nearby I/O activities 
     """
@@ -108,7 +105,7 @@ def generate_bandwidth(df, window_size=0.0005, plot_bw=True):
         plt.grid(True, which='both', linestyle='--', linewidth=0.5)
         plt.savefig("bandwidth.png")
     return df
-def generate_bandwidth_parallel(df_chunk, df, window_size):
+def chunck_bw_entry_aligned(df_chunk, df, window_size):
     """
     This function calculates bandwidth for a chunk of data.
     """
@@ -136,7 +133,7 @@ def generate_bandwidth_parallel(df_chunk, df, window_size):
     
     return bandwidth_values
 
-def parallel_bandwidth(df, window_size=0.0005, plot_bw=True):
+def bw_entry_aligned_para(df, window_size=0.0005, plot_bw=True):
     """
     A parallelized version of generate_bandwidth.
     """
@@ -149,7 +146,7 @@ def parallel_bandwidth(df, window_size=0.0005, plot_bw=True):
     
     # Use a Pool to process each chunk in parallel
     with Pool(processes=num_processes) as pool:
-        results = pool.starmap(generate_bandwidth_parallel, [(chunk, df, window_size) for chunk in chunks])
+        results = pool.starmap(chunck_bw_entry_aligned, [(chunk, df, window_size) for chunk in chunks])
     
     # Flatten results and assign bandwidth values to the dataframe
     bandwidth_values = [val for sublist in results for val in sublist]
@@ -166,19 +163,86 @@ def parallel_bandwidth(df, window_size=0.0005, plot_bw=True):
         plt.savefig("bandwidth_parallel%f.png" % window_size)
     
     return df
+
+def bw_time_aligned(data, window_size, step_size):
+    """Generate bandwidth based on a window-based approach."""
+    bandwidths = []
+    window_start = data['Timestamp (in nanoseconds)'].iloc[0]
+    window_end = window_start + window_size
+    while window_end <= data['Timestamp (in nanoseconds)'].iloc[-1]:
+        window_data = data[(data['Timestamp (in nanoseconds)'] >= window_start) & 
+                           (data['Timestamp (in nanoseconds)'] < window_end)]
+        bandwidth = window_data['I/O Size'].sum() / window_size
+        bandwidths.append(bandwidth)
+        window_start += step_size
+        window_end = window_start + window_size
+    return bandwidths
+
+def chunk_bw_time_aligned(args):
+    """Adjusted function to fix the issue with window alignment."""
+    import bisect
+    data, window_size, step_size, chunk_start, chunk_end = args
+    bandwidths = []
+    aligned_start = data['Timestamp (in nanoseconds)'].iloc[0]
+    window_start = aligned_start + np.ceil((chunk_start - aligned_start) / step_size) * step_size
+
+    window_end = window_start + window_size
+    timestamps = data['Timestamp (in nanoseconds)'].values
+    print(chunk_start, chunk_end, end='\t')
+    print(window_start, window_end)
+    while window_start < chunk_end and window_end <= data['Timestamp (in nanoseconds)'].iloc[-1]:
+        start_index = bisect.bisect_left(timestamps, window_start)
+        end_index = bisect.bisect_left(timestamps, window_end)
+        window_data = data.iloc[start_index:end_index]
+        bandwidth = window_data['I/O Size'].sum() / window_size
+        bandwidths.append(bandwidth)
+        window_start += step_size
+        window_end = window_start + window_size
+    # print(len(bandwidths))
+    return bandwidths
+
+def bw_time_aligned_para(data, window_size, step_size):
+    """Adjusted parallel function using the fixed chunk processing function."""
+    num_cpus = cpu_count()
+    total_time = data['Timestamp (in nanoseconds)'].iloc[-1] - data['Timestamp (in nanoseconds)'].iloc[0]
+    chunk_size = total_time / num_cpus
+    chunks = [(data['Timestamp (in nanoseconds)'].iloc[0] + i*chunk_size, 
+               data['Timestamp (in nanoseconds)'].iloc[0] + (i+1)*chunk_size) for i in range(num_cpus)]
+    pool = Pool(num_cpus)
+    results = pool.map(chunk_bw_time_aligned, [(data, window_size, step_size, start, end) for start, end in chunks])
+    pool.close()
+    bandwidths = [item for sublist in results for item in sublist]
+    return bandwidths
+
+def verify_bw_time_aligned_para():
+    """
+    helper function to verify the correctness of the parallel bandwidth computation
+    """
+    data = pd.read_csv('preprocessed.csv')
+    window_size = 0.1
+    step_size = 0.005
+    sequential_bandwidths = bw_time_aligned(data, window_size, step_size)
+    parallel_bandwidths = bw_time_aligned_para(data, window_size, step_size)
+    plt.figure(figsize=(15, 6))
+    plt.plot(sequential_bandwidths, label='Sequential Bandwidth', alpha=0.7)
+    plt.plot(parallel_bandwidths, label='Parallel Bandwidth', alpha=0.7, linestyle='--')
+    plt.title('Comparison of Sequential and Parallel Bandwidth Computations')
+    plt.xlabel('Window Index')
+    plt.ylabel('Bandwidth')
+    plt.legend()
+    plt.grid(True)
+    plt.tight_layout()
+    plt.show()
 if __name__ == "__main__":
     PATH_PREFIX = '/mnt/nvme1n1/kt19'
     WINDOW_SIZE = 10.
+    STEP_SIZE = WINDOW_SIZE / 2
     # df_sample = read_trace(os.path.join(PATH_PREFIX, "ssdtrace-00"))
-    # df_sample = clean_df(df_sample)
-
     # df_sample.to_csv("preprocessed.csv")
+
     # read df_sample from csv
-    df_sample = pd.read_csv("preprocessed.csv")
+    df = pd.read_csv("preprocessed.csv")
 
-    # df_sample = generate_bandwidth(df_sample, window_size=WINDOW_SIZE)
-    df_sample = parallel_bandwidth(df_sample, window_size=WINDOW_SIZE)
-
-    df_sample.to_csv("preprocessed_bw%f.csv" % WINDOW_SIZE)
-    print(df_sample.head())
-    print(df_sample.info())
+    # bw_df = bw_entry_aligned(df, window_size=WINDOW_SIZE)
+    bw_l = bw_time_aligned(df, window_size=WINDOW_SIZE, step_size=STEP_SIZE)
+    print(bw_l)
