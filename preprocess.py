@@ -16,8 +16,10 @@
         
 import pandas as pd
 import matplotlib.pyplot as plt
+import os
+from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
-
+import numpy as np
 
 
 def read_trace(file_name):
@@ -80,7 +82,7 @@ def generate_bandwidth(df, window_size=0.0005, plot_bw=True):
     bandwidth_values = []
 
     # For each timestamp, compute the bandwidth
-    for index, row in df.iterrows():
+    for index, row in tqdm(df.iterrows()):
         start_time = row['Timestamp (in nanoseconds)'] - window_size / 2
         end_time = row['Timestamp (in nanoseconds)'] + window_size / 2
         
@@ -157,9 +159,17 @@ def parallel_bandwidth(df, window_size=0.0005, plot_bw=True):
     
     return df
 if __name__ == "__main__":
-    df_sample = read_trace("ssdtrace-sample")
-    df_sample = clean_df(df_sample)
+    PATH_PREFIX = '/mnt/nvme1n1/kt19'
+    # df_sample = read_trace(os.path.join(PATH_PREFIX, "ssdtrace-00"))
+    # df_sample = clean_df(df_sample)
 
-    df_sample.to_csv("preprocessed.csv")
+    # df_sample.to_csv("preprocessed.csv")
+    # read df_sample from csv
+    df_sample = pd.read_csv("preprocessed.csv")
+    print(df_sample.head())
+    print(df_sample.info())
+
+    # df_sample = generate_bandwidth(df_sample, window_size=0.1)
     df_sample = parallel_bandwidth(df_sample, window_size=0.1)
+
     print(df_sample.head())
