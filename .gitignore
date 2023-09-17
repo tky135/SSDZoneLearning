@@ -3,3 +3,5 @@ ssdtrace*
 *.png
 *.csv
 *.jpg
+*.pkl
+Autogluon*

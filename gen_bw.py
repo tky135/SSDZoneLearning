@@ -21,6 +21,8 @@ from tqdm import tqdm
 from multiprocessing import Pool, cpu_count
 import numpy as np
 import bisect
+import pickle
+
 
 def read_trace(file_name):
 
@@ -33,7 +35,8 @@ def read_trace(file_name):
 
     processed_data =  []
     with open(file_name, "r") as file:
-        for line in tqdm(file):
+        file = file.readlines()
+        for line in tqdm(file, desc="Reading file"):
             line = line.split()
             if len(line) == 11:
                 major_minor = line[0].split(',')
@@ -188,8 +191,6 @@ def chunk_bw_time_aligned(args):
 
     window_end = window_start + window_size
     timestamps = data['Timestamp (in nanoseconds)'].values
-    print(chunk_start, chunk_end, end='\t')
-    print(window_start, window_end)
     while window_start < chunk_end and window_end <= data['Timestamp (in nanoseconds)'].iloc[-1]:
         start_index = bisect.bisect_left(timestamps, window_start)
         end_index = bisect.bisect_left(timestamps, window_end)
@@ -233,16 +234,58 @@ def verify_bw_time_aligned_para():
     plt.grid(True)
     plt.tight_layout()
     plt.show()
+
+
+def plot_bw_list():
+    concat_data = []
+    for i in range(27):
+        file = 'bw_l_%02d.pkl' % i
+        if os.path.exists(file):
+            with open(file, 'rb') as f:
+                data = pickle.load(f)
+                concat_data += data
+    plt.figure(figsize=(15, 6))
+    plt.plot(concat_data, markersize=4, linewidth=2, color='purple')
+    plt.title("Bandwidth Data")
+    plt.xlabel("Data Points")
+    plt.ylabel("Bandwidth")
+    plt.grid(True)
+    plt.savefig("Bandwith.png")
+
 if __name__ == "__main__":
     PATH_PREFIX = '/mnt/nvme1n1/kt19'
-    WINDOW_SIZE = 10.
-    STEP_SIZE = WINDOW_SIZE / 2
+    WINDOW_SIZE = 100.   # in seconds
+    STEP_SIZE = 25.
+    NUM = 11
     # df_sample = read_trace(os.path.join(PATH_PREFIX, "ssdtrace-00"))
     # df_sample.to_csv("preprocessed.csv")
+    # def process_trace(i):
+    #     print("processing %d" % i)
+    #     df = read_trace(os.path.join(PATH_PREFIX, "ssdtrace-%02d" % i))
+    #     df.to_csv("preprocessed-%02d.csv" % i)
+    # with Pool(5) as pool:
+    #     pool.map(process_trace, range(5))
+
+    for i in range(20,27):
+        print("processing %d" % i)
+        df = read_trace(os.path.join(PATH_PREFIX, "ssdtrace-%02d" % i))
+        df.to_csv("preprocessed-%02d.csv" % i)
+    raise Exception("done")
 
     # read df_sample from csv
-    df = pd.read_csv("preprocessed.csv")
-
+    df = pd.read_csv("preprocessed-%02d.csv" % NUM)
     # bw_df = bw_entry_aligned(df, window_size=WINDOW_SIZE)
-    bw_l = bw_time_aligned(df, window_size=WINDOW_SIZE, step_size=STEP_SIZE)
-    print(bw_l)
+    bw_l = bw_time_aligned_para(df, window_size=WINDOW_SIZE, step_size=STEP_SIZE)
+    with open('bw_l_%02d.pkl' % NUM, 'wb') as f:
+        pickle.dump(bw_l, f)
+    
+    # write bw_l to pickle file
+
+    # plot the bandwidth
+    plt.figure(figsize=(12,7))
+    plt.plot(bw_l)
+    plt.xlabel('Chunk Index')
+    plt.ylabel('Bandwidth')
+    plt.title('Bandwidth with respect to Chunk Index')
+    plt.grid(True, which='both', linestyle='--', linewidth=0.5)
+    plt.savefig("bandwidth_time_aligned.png")
